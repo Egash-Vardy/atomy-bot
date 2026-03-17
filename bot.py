@@ -16,7 +16,7 @@ from aiogram.types import (
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────
-API_TOKEN = "8649187707:AAGOBrbr5oaL7Z-bynQk2_sclF6Rt49QjDo"
+API_TOKEN = "8649187707:AAHRB0xnugFsg0Itnlecy7-wqCGPivltz6M"
 ADMIN_IDS = [8065108309, 1613877823]
 DB_NAME = "community_pro.db"
 
