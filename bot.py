@@ -21,6 +21,7 @@ ADMIN_IDS = [8065108309, 1613877823]
 DB_NAME = "community_pro.db"
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
@@ -28,16 +29,6 @@ dp = Dispatcher(storage=storage)
 
 router = Router()
 dp.include_router(router)
-
-
-# Реальные публичные ссылки на стикеры (webp / tgs)
-# Взяты из официальных паков Telegram — работают без загрузки
-STICKER_WELCOME = "https://t.me/addstickers/AnimatedRocket/rocket.webp"          # ракета / приветствие
-STICKER_THANK   = "https://t.me/addstickers/AnimatedHearts/heart_red.tgs"       # красное сердце (анимация)
-STICKER_FIRE    = "https://t.me/addstickers/FireEmoji/fire.webp"                # огонь
-STICKER_WAIT    = "https://t.me/addstickers/CoffeeBreak/coffee.tgs"             # кофе / подожди
-STICKER_GOOD    = "https://t.me/addstickers/OkEmoji/ok_hand.webp"               # ок / супер
-
 
 # ─── БАЗА ДАННЫХ ──────────────────────────────────────────────
 def init_db():
@@ -55,19 +46,15 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 init_db()
-
 
 # ─── УВЕДОМЛЕНИЕ АДМИНОВ ПРИ ЗАПУСКЕ ──────────────────────────
 async def notify_admins():
     for adm in ADMIN_IDS:
         try:
-            await bot.send_sticker(adm, STICKER_FIRE)
             await bot.send_message(adm, "✅ Бот запущен")
         except Exception as e:
-            logging.error(f"Ошибка уведомления админа {adm}: {e}")
-
+            logger.error(f"Ошибка уведомления админа {adm}: {e}")
 
 # ─── /start ───────────────────────────────────────────────────
 @router.message(CommandStart())
@@ -85,14 +72,12 @@ async def cmd_start(m: Message):
 
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-
     cur.execute("SELECT user_id FROM users WHERE user_id = ?", (uid,))
     if not cur.fetchone():
         cur.execute(
             "INSERT INTO users (user_id, name, username, referrer_id, reg_date) VALUES (?, ?, ?, ?, ?)",
             (uid, name, username, ref, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
-
     conn.commit()
     conn.close()
 
@@ -110,19 +95,11 @@ async def cmd_start(m: Message):
         f"{name}, добро пожаловать в чат! 🚀\n\n"
         "Рады видеть тебя. Это пространство для тех, кто хочет развиваться, "
         "расти и выстраивать доход в комфортном темпе.\n\n"
-        "Здесь: поддержка, честно про деньги и возможности — без давления и спешки, "
-        "с уважением к каждому.\n\n"
-        "Если ты хочешь в команду, напиши в чат «+» — подскажем, с чего лучше начать.\n\n"
+        "Если ты хочешь в команду, напиши «+» — подскажем, с чего начать.\n\n"
         "Рады, что ты с нами ❤️"
     )
 
-    try:
-        await bot.send_sticker(m.chat.id, STICKER_WELCOME)
-    except:
-        pass  # если стикер не загрузится — не падает бот
-
     await m.answer(text, reply_markup=kb)
-
 
 # ─── Статистика ───────────────────────────────────────────────
 @router.message(F.text == "📊 Моя статистика")
@@ -134,7 +111,6 @@ async def stats(m: Message):
     conn.close()
 
     if not rows:
-        await bot.send_sticker(m.chat.id, STICKER_WAIT)
         await m.answer("📊 У вас пока нет приглашённых.")
         return
 
@@ -142,18 +118,14 @@ async def stats(m: Message):
     for i, (name, username) in enumerate(rows, 1):
         text += f"{i}. @{username}\n" if username else f"{i}. {name}\n"
 
-    await bot.send_sticker(m.chat.id, STICKER_GOOD)
     await m.answer(text)
-
 
 # ─── Реферальная ссылка ──────────────────────────────────────
 @router.message(F.text == "🔗 Реферальная ссылка")
 async def ref_link(m: Message):
     me = await bot.get_me()
     link = f"https://t.me/{me.username}?start={m.from_user.id}"
-    await bot.send_sticker(m.chat.id, STICKER_FIRE)
     await m.answer(f"Твоя реферальная ссылка:\n{link}")
-
 
 # ─── Админ-панель ─────────────────────────────────────────────
 @router.message(F.text == "⚙️ Админ панель")
@@ -169,13 +141,7 @@ async def admin_panel(m: Message):
     refs = cur.fetchone()[0]
     conn.close()
 
-    text = (
-        f"⚙️ Админ панель\n\n"
-        f"👥 Всего пользователей: {total}\n"
-        f"🤝 Приглашённых: {refs}\n\n"
-        "Выберите действие:"
-    )
-
+    text = f"⚙️ Админ панель\n\n👥 Всего: {total}\n🤝 Приглашённых: {refs}"
     kb = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📢 Рассылка")],
@@ -184,24 +150,27 @@ async def admin_panel(m: Message):
         resize_keyboard=True,
     )
 
-    await bot.send_sticker(m.chat.id, STICKER_GOOD)
     await m.answer(text, reply_markup=kb)
 
-
-# ─── Обработка всех сообщений в ЛС ────────────────────────────
+# ─── Главный обработчик сообщений в ЛС ────────────────────────
 @router.message(F.chat.type == "private")
 async def any_private_message(m: Message):
     uid = m.from_user.id
+    text = (m.text or "").strip()
+
+    logger.info(f"Получено сообщение от {uid}: '{text}'")
 
     if uid in ADMIN_IDS:
+        logger.info("Сообщение от админа — пропускаем обработку")
         return
 
-    if not m.text:
+    if not text:
+        logger.info("Сообщение пустое или без текста — игнор")
         return
-
-    text = m.text.strip()
 
     if text == "+":
+        logger.info(f"Обнаружен '+' от пользователя {uid}")
+
         name = m.from_user.first_name or "Без имени"
         full_name = m.from_user.full_name
         user_id = m.from_user.id
@@ -215,29 +184,29 @@ async def any_private_message(m: Message):
                     [InlineKeyboardButton(text="👤 Профиль", url=f"https://t.me/{m.from_user.username}" if m.from_user.username else "https://t.me")]
                 ])
 
-                await bot.send_sticker(adm, STICKER_FIRE)
                 await bot.send_message(
                     adm,
                     f"🚨 НОВЫЙ + ОТКЛИК 🚨\n\n"
                     f"👤 {full_name}\n"
-                    f"🆔 <code>{user_id}</code>\n"
+                    f"🆔 {user_id}\n"
                     f"📛 {username}\n"
                     f"⏰ {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
-                    f"Готов(а) присоединиться к команде! 🔥",
+                    f"Хочет в команду!",
                     reply_markup=kb_admin,
                     parse_mode="HTML"
                 )
+                logger.info(f"Уведомление отправлено админу {adm}")
             except Exception as e:
-                logging.error(f"Ошибка отправки админу {adm}: {e}")
+                logger.error(f"Ошибка отправки админу {adm}: {e}")
 
-        # Ответ пользователю + кнопки
+        # Ответ пользователю
         reply_text = f"""Спасибо, {name}! 💪
 
-Ты сделала крутой шаг — мы уже в деле!
+Ты сделала крутой шаг!
 
-Сейчас кто-то из команды свяжется с тобой и расскажет, как комфортно начать.
+Сейчас с тобой свяжутся и расскажут, как начать комфортно.
 
-А пока выбери, что тебе ближе всего:
+Выбери, что тебе ближе:
 """
 
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -246,54 +215,40 @@ async def any_private_message(m: Message):
             [InlineKeyboardButton(text="3. Чек-лист", callback_data="yes")]
         ])
 
-        await bot.send_sticker(m.chat.id, STICKER_THANK)
         await m.answer(reply_text, reply_markup=kb)
+        logger.info(f"Ответ с кнопками отправлен пользователю {uid}")
         return
 
-    # Остальные сообщения — админам
+    # Пересылка остальных сообщений админам
+    logger.info(f"Пересылаем обычное сообщение от {uid} админам")
     for adm in ADMIN_IDS:
         try:
             await bot.send_message(
                 adm,
-                f"📩 Сообщение от {m.from_user.full_name} (id {uid})\n\n{m.text}"
+                f"📩 От {m.from_user.full_name} (id {uid})\n\n{text}"
             )
-        except:
-            pass
-
+        except Exception as e:
+            logger.error(f"Ошибка пересылки админу {adm}: {e}")
 
 # ─── Inline-кнопки ────────────────────────────────────────────
 @router.callback_query(F.data == "yes")
 async def callback_yes(cb: CallbackQuery):
-    name = cb.from_user.first_name
-    text = f"""Вот твой чек-лист для старта:\n\nЧЕК-ЛИСТ[](https://clipr.cc/RC4rz)"""
-
-    await bot.send_sticker(cb.message.chat.id, STICKER_GOOD)
+    text = "Вот твой чек-лист:\n\nЧЕК-ЛИСТ[](https://clipr.cc/RC4rz)"
     await cb.message.answer(text)
     await cb.answer()
-
 
 @router.callback_query(F.data.in_({"biz", "shop"}))
 async def callback_direction(cb: CallbackQuery):
-    name = cb.from_user.first_name
     direction = "бизнесе" if cb.data == "biz" else "покупках"
-
-    text = f"""Супер, {name}!
-
-Начнём твой старт в {direction}.
-
-Скоро свяжусь с тобой лично и пришлю всё необходимое 🚀"""
-
-    await bot.send_sticker(cb.message.chat.id, STICKER_FIRE)
+    text = f"Супер!\nНачнём твой старт в {direction}.\nСкоро свяжусь лично 🚀"
     await cb.message.answer(text)
     await cb.answer()
-
 
 # ─── ЗАПУСК ───────────────────────────────────────────────────
 async def main():
     await notify_admins()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-
 
 if __name__ == "__main__":
     asyncio.run(main())
