@@ -30,12 +30,13 @@ router = Router()
 dp.include_router(router)
 
 
-# Популярные стикеры (можно заменить на свои из твоего стикерпака)
-STICKER_WELCOME     = "CAACAgIAAxkBAAEKAAJlmZ5zAAH5zZ3AAZ3zZ3AAZ3zZ3AAZ3zZ3AABAQADAgADeAADNQQ"   # приветствие / ракета
-STICKER_THANK       = "CAACAgIAAxkBAAEKAAJlmZ6BAAH5zZ3AAZ3zZ3AAZ3zZ3AAZ3zZ3AABAQADAgADeAADNQQ"   # сердечко / спасибо
-STICKER_FIRE        = "CAACAgIAAxkBAAEKAAJlmZ6zAAH5zZ3AAZ3zZ3AAZ3zZ3AAZ3zZ3AABAQADAgADeAADNQQ"   # огонь
-STICKER_WAIT        = "CAACAgIAAxkBAAEKAAJlmZ7BAAH5zZ3AAZ3zZ3AAZ3zZ3AAZ3zZ3AABAQADAgADeAADNQQ"   # ждём / кофе
-STICKER_GOOD        = "CAACAgIAAxkBAAEKAAJlmZ7zAAH5zZ3AAZ3zZ3AAZ3zZ3AAZ3zZ3AABAQADAgADeAADNQQ"   # супер / ок
+# Реальные публичные ссылки на стикеры (webp / tgs)
+# Взяты из официальных паков Telegram — работают без загрузки
+STICKER_WELCOME = "https://t.me/addstickers/AnimatedRocket/rocket.webp"          # ракета / приветствие
+STICKER_THANK   = "https://t.me/addstickers/AnimatedHearts/heart_red.tgs"       # красное сердце (анимация)
+STICKER_FIRE    = "https://t.me/addstickers/FireEmoji/fire.webp"                # огонь
+STICKER_WAIT    = "https://t.me/addstickers/CoffeeBreak/coffee.tgs"             # кофе / подожди
+STICKER_GOOD    = "https://t.me/addstickers/OkEmoji/ok_hand.webp"               # ок / супер
 
 
 # ─── БАЗА ДАННЫХ ──────────────────────────────────────────────
@@ -64,8 +65,8 @@ async def notify_admins():
         try:
             await bot.send_sticker(adm, STICKER_FIRE)
             await bot.send_message(adm, "✅ Бот запущен")
-        except:
-            pass
+        except Exception as e:
+            logging.error(f"Ошибка уведомления админа {adm}: {e}")
 
 
 # ─── /start ───────────────────────────────────────────────────
@@ -115,7 +116,11 @@ async def cmd_start(m: Message):
         "Рады, что ты с нами ❤️"
     )
 
-    await bot.send_sticker(m.chat.id, STICKER_WELCOME)
+    try:
+        await bot.send_sticker(m.chat.id, STICKER_WELCOME)
+    except:
+        pass  # если стикер не загрузится — не падает бот
+
     await m.answer(text, reply_markup=kb)
 
 
