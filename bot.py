@@ -30,6 +30,14 @@ router = Router()
 dp.include_router(router)
 
 
+# Популярные стикеры (можно заменить на свои из твоего стикерпака)
+STICKER_WELCOME     = "CAACAgIAAxkBAAEKAAJlmZ5zAAH5zZ3AAZ3zZ3AAZ3zZ3AAZ3zZ3AABAQADAgADeAADNQQ"   # приветствие / ракета
+STICKER_THANK       = "CAACAgIAAxkBAAEKAAJlmZ6BAAH5zZ3AAZ3zZ3AAZ3zZ3AAZ3zZ3AABAQADAgADeAADNQQ"   # сердечко / спасибо
+STICKER_FIRE        = "CAACAgIAAxkBAAEKAAJlmZ6zAAH5zZ3AAZ3zZ3AAZ3zZ3AAZ3zZ3AABAQADAgADeAADNQQ"   # огонь
+STICKER_WAIT        = "CAACAgIAAxkBAAEKAAJlmZ7BAAH5zZ3AAZ3zZ3AAZ3zZ3AAZ3zZ3AABAQADAgADeAADNQQ"   # ждём / кофе
+STICKER_GOOD        = "CAACAgIAAxkBAAEKAAJlmZ7zAAH5zZ3AAZ3zZ3AAZ3zZ3AAZ3zZ3AABAQADAgADeAADNQQ"   # супер / ок
+
+
 # ─── БАЗА ДАННЫХ ──────────────────────────────────────────────
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -54,6 +62,7 @@ init_db()
 async def notify_admins():
     for adm in ADMIN_IDS:
         try:
+            await bot.send_sticker(adm, STICKER_FIRE)
             await bot.send_message(adm, "✅ Бот запущен")
         except:
             pass
@@ -97,15 +106,16 @@ async def cmd_start(m: Message):
         kb.keyboard.append([KeyboardButton(text="⚙️ Админ панель")])
 
     text = (
-        f"{name}, добро пожаловать в чат!\n\n"
+        f"{name}, добро пожаловать в чат! 🚀\n\n"
         "Рады видеть тебя. Это пространство для тех, кто хочет развиваться, "
         "расти и выстраивать доход в комфортном темпе.\n\n"
         "Здесь: поддержка, честно про деньги и возможности — без давления и спешки, "
         "с уважением к каждому.\n\n"
         "Если ты хочешь в команду, напиши в чат «+» — подскажем, с чего лучше начать.\n\n"
-        "Рады, что ты с нами."
+        "Рады, что ты с нами ❤️"
     )
 
+    await bot.send_sticker(m.chat.id, STICKER_WELCOME)
     await m.answer(text, reply_markup=kb)
 
 
@@ -119,13 +129,15 @@ async def stats(m: Message):
     conn.close()
 
     if not rows:
-        await m.answer("📊 У вас нет приглашённых.")
+        await bot.send_sticker(m.chat.id, STICKER_WAIT)
+        await m.answer("📊 У вас пока нет приглашённых.")
         return
 
     text = f"📊 Вы пригласили: {len(rows)}\n\n"
     for i, (name, username) in enumerate(rows, 1):
         text += f"{i}. @{username}\n" if username else f"{i}. {name}\n"
 
+    await bot.send_sticker(m.chat.id, STICKER_GOOD)
     await m.answer(text)
 
 
@@ -134,7 +146,8 @@ async def stats(m: Message):
 async def ref_link(m: Message):
     me = await bot.get_me()
     link = f"https://t.me/{me.username}?start={m.from_user.id}"
-    await m.answer(f"Ваша ссылка:\n{link}")
+    await bot.send_sticker(m.chat.id, STICKER_FIRE)
+    await m.answer(f"Твоя реферальная ссылка:\n{link}")
 
 
 # ─── Админ-панель ─────────────────────────────────────────────
@@ -151,14 +164,31 @@ async def admin_panel(m: Message):
     refs = cur.fetchone()[0]
     conn.close()
 
-    text = f"⚙️ Админ панель\n\n👥 Пользователей: {total}\n🤝 Приглашённых: {refs}"
-    await m.answer(text)
+    text = (
+        f"⚙️ Админ панель\n\n"
+        f"👥 Всего пользователей: {total}\n"
+        f"🤝 Приглашённых: {refs}\n\n"
+        "Выберите действие:"
+    )
+
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📢 Рассылка")],
+            [KeyboardButton(text="🔙 Назад")],
+        ],
+        resize_keyboard=True,
+    )
+
+    await bot.send_sticker(m.chat.id, STICKER_GOOD)
+    await m.answer(text, reply_markup=kb)
 
 
 # ─── Обработка всех сообщений в ЛС ────────────────────────────
 @router.message(F.chat.type == "private")
 async def any_private_message(m: Message):
-    if m.from_user.id in ADMIN_IDS:
+    uid = m.from_user.id
+
+    if uid in ADMIN_IDS:
         return
 
     if not m.text:
@@ -172,20 +202,15 @@ async def any_private_message(m: Message):
         user_id = m.from_user.id
         username = f"@{m.from_user.username}" if m.from_user.username else "нет"
 
-        # Яркое уведомление админам (вариант 3)
+        # Уведомление админам
         for adm in ADMIN_IDS:
             try:
                 kb_admin = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(
-                        text="✉️ Написать сразу",
-                        url=f"tg://user?id={user_id}"
-                    )],
-                    [InlineKeyboardButton(
-                        text="👤 Профиль",
-                        url=f"https://t.me/{m.from_user.username}" if m.from_user.username else "https://t.me"
-                    )]
+                    [InlineKeyboardButton(text="✉️ Написать сразу", url=f"tg://user?id={user_id}")],
+                    [InlineKeyboardButton(text="👤 Профиль", url=f"https://t.me/{m.from_user.username}" if m.from_user.username else "https://t.me")]
                 ])
 
+                await bot.send_sticker(adm, STICKER_FIRE)
                 await bot.send_message(
                     adm,
                     f"🚨 НОВЫЙ + ОТКЛИК 🚨\n\n"
@@ -200,37 +225,32 @@ async def any_private_message(m: Message):
             except Exception as e:
                 logging.error(f"Ошибка отправки админу {adm}: {e}")
 
-        # Ответ пользователю
+        # Ответ пользователю + кнопки
         reply_text = f"""Спасибо, {name}! 💪
 
 Ты сделала крутой шаг — мы уже в деле!
 
-Сейчас кто-то из команды свяжется с тобой лично и расскажет:
-• как комфортно стартовать
-• какие варианты подходят именно тебе
-• что делать дальше без спешки и давления
+Сейчас кто-то из команды свяжется с тобой и расскажет, как комфортно начать.
 
-Пока ждёшь — можешь сказать, что тебе интереснее всего: бизнес, покупки или пока просто посмотреть? ❤️
-
-(или просто подожди сообщения от нас)"""
+А пока выбери, что тебе ближе всего:
+"""
 
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Бизнес выглядит круто", callback_data="biz"),
-                InlineKeyboardButton(text="Покупки и бонусы", callback_data="shop")
-            ],
-            [InlineKeyboardButton(text="Пришли чек-лист", callback_data="yes")]
+            [InlineKeyboardButton(text="1. Бизнес", callback_data="biz")],
+            [InlineKeyboardButton(text="2. Покупки", callback_data="shop")],
+            [InlineKeyboardButton(text="3. Чек-лист", callback_data="yes")]
         ])
 
+        await bot.send_sticker(m.chat.id, STICKER_THANK)
         await m.answer(reply_text, reply_markup=kb)
         return
 
-    # Все остальные сообщения — пересылаем админам
+    # Остальные сообщения — админам
     for adm in ADMIN_IDS:
         try:
             await bot.send_message(
                 adm,
-                f"📩 Сообщение от {m.from_user.full_name} (id {m.from_user.id})\n\n{m.text}"
+                f"📩 Сообщение от {m.from_user.full_name} (id {uid})\n\n{m.text}"
             )
         except:
             pass
@@ -240,51 +260,10 @@ async def any_private_message(m: Message):
 @router.callback_query(F.data == "yes")
 async def callback_yes(cb: CallbackQuery):
     name = cb.from_user.first_name
-    text = f"""Супер, {name}!
+    text = f"""Вот твой чек-лист для старта:\n\nЧЕК-ЛИСТ[](https://clipr.cc/RC4rz)"""
 
-Вот твой чек-лист для старта:
-
-1. Ознакомься с возможностями
-2. Выбери путь
-3. Начни действовать
-
-Хочешь выбрать направление?"""
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Да", callback_data="choose")],
-    ])
-
-    await cb.message.answer(text, reply_markup=kb)
-    await cb.answer()
-
-
-@router.callback_query(F.data == "have")
-async def callback_have(cb: CallbackQuery):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Бизнес", callback_data="biz")],
-        [InlineKeyboardButton(text="Покупки", callback_data="shop")],
-    ])
-
-    await cb.message.answer("Тогда выбери направление:", reply_markup=kb)
-    await cb.answer()
-
-
-@router.callback_query(F.data == "choose")
-async def callback_choose(cb: CallbackQuery):
-    name = cb.from_user.first_name
-    text = f"""Замечательно, {name}!
-
-Скачать чек-лист:
-https://docs.google.com/document/d/1lfw0xlnBjAOqMpo6utmjQ2w1QzFs7APON9WnJc_qI1w/edit?usp=sharing
-
-Что тебе ближе?"""
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Бизнес", callback_data="biz")],
-        [InlineKeyboardButton(text="Покупки", callback_data="shop")],
-    ])
-
-    await cb.message.answer(text, reply_markup=kb)
+    await bot.send_sticker(cb.message.chat.id, STICKER_GOOD)
+    await cb.message.answer(text)
     await cb.answer()
 
 
@@ -297,13 +276,9 @@ async def callback_direction(cb: CallbackQuery):
 
 Начнём твой старт в {direction}.
 
-1. Я пришлю инструкцию
-2. Помогу построить план / сделать заказ
-3. Буду сопровождать
+Скоро свяжусь с тобой лично и пришлю всё необходимое 🚀"""
 
-Скоро напишу тебе лично.
-"""
-
+    await bot.send_sticker(cb.message.chat.id, STICKER_FIRE)
     await cb.message.answer(text)
     await cb.answer()
 
