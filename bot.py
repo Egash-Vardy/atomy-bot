@@ -1,12 +1,11 @@
 import asyncio
 import sqlite3
 import logging
-import os
 from datetime import datetime
-from typing import Union, List, Dict
+from typing import List
 
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.filters import CommandStart, Command, StateFilter
+from aiogram.filters import CommandStart, StateFilter
 from aiogram.types import (
     Message,
     ReplyKeyboardMarkup,
@@ -14,104 +13,91 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     CallbackQuery,
-    ContentType,
 )
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
-# ─── КОНФИГУРАЦИЯ И НАСТРОЙКИ ────────────────────────────────
+# ─── НАСТРОЙКИ ────────────────────────────────────────────────
 API_TOKEN = "8649187707:AAHRB0xnugFsg0Itnlecy7-wqCGPivltz6M"
 ADMIN_IDS = [8065108309, 1613877823]
 DB_NAME = "community_pro.db"
-LOG_FILE = "bot_system.log"
 
-# Настройка логирования (в консоль и в файл)
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - [%(levelname)s] - %(name)s - %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.FileHandler("bot.log"), logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
-# ─── СОСТОЯНИЯ (FSM) ──────────────────────────────────────────
+# Состояния для админки
 class AdminStates(StatesGroup):
-    waiting_for_broadcast_text = State()
-    confirm_broadcast = State()
+    waiting_for_broadcast = State()
 
-class UserStates(StatesGroup):
-    viewing_content = State()
-
-# ─── КЛАСС ДЛЯ РАБОТЫ С БАЗОЙ ДАННЫХ ──────────────────────────
-class Database:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        self._create_table()
-
-    def _execute(self, query: str, params: tuple = (), fetch: bool = False):
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.cursor()
-            cur.execute(query, params)
-            if fetch:
-                return cur.fetchall()
-            conn.commit()
-
-    def _create_table(self):
-        query = """
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            full_name TEXT,
-            username TEXT,
-            referrer_id INTEGER,
-            reg_date TEXT,
-            is_active INTEGER DEFAULT 1
-        )
-        """
-        self._execute(query)
-
-    def add_user(self, uid: int, name: str, username: str, ref_id: int = None):
-        check = self._execute("SELECT user_id FROM users WHERE user_id = ?", (uid,), fetch=True)
-        if not check:
-            date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            query = "INSERT INTO users (user_id, full_name, username, referrer_id, reg_date) VALUES (?, ?, ?, ?, ?)"
-            self._execute(query, (uid, name, username, ref_id, date))
-            return True
-        return False
-
-    def get_stats(self):
-        total = self._execute("SELECT COUNT(*) FROM users", fetch=True)[0][0]
-        refs = self._execute("SELECT COUNT(*) FROM users WHERE referrer_id IS NOT NULL", fetch=True)[0][0]
-        return total, refs
-
-    def get_all_users(self):
-        return self._execute("SELECT user_id FROM users", fetch=True)
-
-db = Database(DB_NAME)
-
-# ─── ИНИЦИАЛИЗАЦИЯ БОТА ───────────────────────────────────────
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 router = Router()
 dp.include_router(router)
 
-# ─── КЛАВИАТУРЫ ───────────────────────────────────────────────
-def main_menu_kb(user_id: int):
-    kb = [
-        [KeyboardButton(text="📊 Моя статистика"), KeyboardButton(text="🔗 Реферальная ссылка")]
-    ]
-    if user_id in ADMIN_IDS:
-        kb.append([KeyboardButton(text="⚙️ Админ панель")])
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+# ─── БАЗА ДАННЫХ ──────────────────────────────────────────────
+class Database:
+    def __init__(self, path):
+        self.path = path
+        self.init_db()
 
-def admin_kb():
+    def init_db(self):
+        with sqlite3.connect(self.path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS users(
+                    user_id INTEGER PRIMARY KEY,
+                    name TEXT,
+                    username TEXT,
+                    referrer_id INTEGER,
+                    reg_date TEXT
+                )
+            """)
+            conn.commit()
+
+    def add_user(self, uid, name, username, ref):
+        with sqlite3.connect(self.path) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT user_id FROM users WHERE user_id = ?", (uid,))
+            if not cur.fetchone():
+                cur.execute(
+                    "INSERT INTO users (user_id, name, username, referrer_id, reg_date) VALUES (?, ?, ?, ?, ?)",
+                    (uid, name, username, ref, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                )
+                conn.commit()
+                return True
+            return False
+
+    def get_all_users(self):
+        with sqlite3.connect(self.path) as conn:
+            return [row[0] for row in conn.execute("SELECT user_id FROM users").fetchall()]
+
+    def get_stats(self):
+        with sqlite3.connect(self.path) as conn:
+            total = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            refs = conn.execute("SELECT COUNT(*) FROM users WHERE referrer_id IS NOT NULL").fetchone()[0]
+            return total, refs
+
+db = Database(DB_NAME)
+
+# ─── КЛАВИАТУРЫ ───────────────────────────────────────────────
+def get_main_kb(uid):
+    buttons = [
+        [KeyboardButton(text="📊 Моя статистика"), KeyboardButton(text="🔗 Реферальная ссылка")],
+    ]
+    if uid in ADMIN_IDS:
+        buttons.append([KeyboardButton(text="⚙️ Админ панель")])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_admin_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📢 Рассылка"), KeyboardButton(text="📈 Детальная статистика")],
+            [KeyboardButton(text="📢 Рассылка")],
             [KeyboardButton(text="🔙 Назад")]
         ],
         resize_keyboard=True
@@ -122,163 +108,188 @@ def admin_kb():
 @router.message(CommandStart())
 async def cmd_start(m: Message):
     uid = m.from_user.id
-    ref_id = None
-    args = m.text.split()
+    name = m.from_user.full_name
+    username = m.from_user.username
     
-    if len(args) > 1 and args[1].isdigit():
-        ref_id = int(args[1]) if int(args[1]) != uid else None
-
-    is_new = db.add_user(uid, m.from_user.full_name, m.from_user.username, ref_id)
-    
-    if is_new and ref_id:
-        try:
-            await bot.send_message(ref_id, f"🔔 По вашей ссылке зарегистрировался новый пользователь: {m.from_user.full_name}")
+    ref = None
+    if len(m.text.split()) > 1:
+        try: ref = int(m.text.split()[1])
         except: pass
 
-    welcome_msg = (
-        f"Рады видеть тебя, {m.from_user.first_name}! 🚀\n\n"
-        "Это пространство для твоего роста. Если ты хочешь в команду, "
-        "просто **отправь «+»** в этот чат, и мы начнем."
+    db.add_user(uid, name, username, ref)
+
+    text = (
+        "Егор Морозов, добро пожаловать в чат!\n\n"
+        "Рады видеть тебя. Это пространство для тех, кто хочет развиваться, расти и выстраивать доход в комфортном темпе.\n\n"
+        "Здесь: поддержка, честно про деньги и возможности — без давления и спешки, с уважением к каждому.\n\n"
+        "Если ты хочешь в команду, напиши в чат «+» — подскажем, с чего лучше начать.\n\n"
+        "Рады, что ты с нами."
     )
-    await m.answer(welcome_msg, reply_markup=main_menu_kb(uid), parse_mode="Markdown")
+    await m.answer(text, reply_markup=get_main_kb(uid))
 
 @router.message(F.text == "+")
 async def process_plus(m: Message):
     uid = m.from_user.id
-    name = m.from_user.first_name
-    
+    name = m.from_user.first_name or "Участник"
+
     # Уведомление админам
     for adm in ADMIN_IDS:
         try:
-            admin_btn = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="👤 Профиль", url=f"tg://user?id={uid}")]
+            kb_admin = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✉️ Написать сразу", url=f"tg://user?id={uid}")]
             ])
-            await bot.send_message(adm, f"🚨 **Новая заявка!**\nОт: {m.from_user.full_name}\nID: `{uid}`", reply_markup=admin_btn, parse_mode="Markdown")
+            await bot.send_message(adm, f"🚨 НОВЫЙ + ОТКЛИК\n👤 {m.from_user.full_name}\nID: {uid}", reply_markup=kb_admin)
         except: pass
 
-    msg_1 = (
-        f"Спасибо, {name}! ❤️\n\n"
-        "Ты готова сделать первый шаг. Давай начнём с простого: я расскажу о возможностях.\n\n"
-        "Хочешь получить наш чек-лист для старта сейчас?"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Да, присылай ✅", callback_data="get_checklist")],
-        [InlineKeyboardButton(text="Уже есть чек-лист 📁", callback_data="already_have_checklist")]
-    ])
-    await m.answer(msg_1, reply_markup=kb)
-
-@router.callback_query(F.data == "get_checklist")
-async def send_checklist(cb: CallbackQuery):
     text = (
-        "Супер! ✨ Вот твой первый шаг.\n\n"
-        "Чек-лист поможет тебе сориентироваться. Хочешь, чтобы я помогла выбрать направление?"
+        f"Спасибо, {name}! \n\n"
+        "Отлично, ты готова сделать первый шаг. \n"
+        "Давай начнём с простого: я расскажу, какие возможности у нас есть и как комфортно подключиться к команде.\n\n"
+        "Сначала небольшая рекомендация:\n"
+        " 1. Ознакомься с нашим чек-листом для старта — он поможет понять, с чего начать.\n"
+        " 2. Потом мы вместе выберем направление, которое тебе ближе: развитие бизнеса или покупка для себя.\n\n"
+        "Если готова, могу сразу прислать чек-лист и пошаговое руководство, чтобы начать уже сегодня.\n\n"
+        "Хочешь, чтобы я отправила его сейчас?"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Да, давай! 🚀", callback_data="choose_direction")]
+        [InlineKeyboardButton(text="Да", callback_data="yes_checklist")],
+        [InlineKeyboardButton(text="Уже есть чек-лист", callback_data="already_have")]
     ])
-    await cb.message.edit_text(text, reply_markup=kb)
+    await m.answer(text, reply_markup=kb)
 
-@router.callback_query(F.data.in_({"choose_direction", "already_have_checklist"}))
-async def final_step(cb: CallbackQuery):
-    url = "https://docs.google.com/document/d/1lfw0xlnBjAOqMpo6utmjQ2w1QzFs7APON9WnJc_qI1w/edit?usp=sharing"
+@router.callback_query(F.data == "yes_checklist")
+async def cb_yes_checklist(cb: CallbackQuery):
+    name = cb.from_user.first_name or "Участник"
     text = (
-        f"Отлично! 💎\n\n[Скачать чек-лист]({url})\n\n"
-        "Теперь выбери, что тебе интереснее:\n"
-        "• **Бизнес** — построение дохода.\n"
-        "• **Покупки** — бонусы и продукты."
+        f"Супер, {name}! \n\n"
+        "Вот твой чек-лист для старта — он поможет легко и уверенно сделать первый шаг:\n"
+        " 1. Ознакомься с возможностями — что можно делать в команде и как получать доход.\n"
+        " 2. Выбери свой путь — бизнес-партнёрство или покупки для себя.\n"
+        " 3. Начни действовать — шаг за шагом, в комфортном темпе.\n\n"
+        "Я буду рядом, чтобы поддерживать и отвечать на все вопросы. \n"
+        "Если хочешь, можем прямо сейчас обсудить, с чего лучше начать твой первый шаг.\n\n"
+        "Хочешь, чтобы я помогла выбрать стартовое направление?"
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💼 Бизнес", callback_data="result_biz")],
-        [InlineKeyboardButton(text="🛍 Покупки", callback_data="result_shop")]
-    ])
-    await cb.message.answer(text, reply_markup=kb, parse_mode="Markdown", disable_web_page_preview=True)
-
-@router.callback_query(F.data.startswith("result_"))
-async def process_result(cb: CallbackQuery):
-    choice = "бизнесе" if "biz" in cb.data else "покупках"
-    await cb.message.answer(f"Прекрасно! Мы начнем твой путь в {choice}. Скоро я напишу тебе лично! 📩")
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Да", callback_data="help_direction")]])
+    await cb.message.answer(text, reply_markup=kb)
     await cb.answer()
 
-# ─── АДМИНСКАЯ ЛОГИКА (РАССЫЛКА) ──────────────────────────────
+@router.callback_query(F.data == "help_direction")
+async def cb_help_direction(cb: CallbackQuery):
+    name = cb.from_user.first_name or "Участник"
+    link = "https://docs.google.com/document/d/1lfw0xlnBjAOqMpo6utmjQ2w1QzFs7APON9WnJc_qI1w/edit?usp=sharing"
+    text = (
+        f"Замечательно, {name}! \n\n"
+        f"Вот твой чек-лист для старта — он поможет сделать первые шаги легко и уверенно:\n"
+        f"[{link}]\n\n"
+        "Теперь давай определимся с первым действием, чтобы начать прямо сегодня:\n"
+        " • Если хочешь попробовать себя в бизнесе, я покажу, с чего начать и как строить доход шаг за шагом.\n"
+        " • Если хочешь начать с покупок для себя, расскажу, как использовать продукты и получать бонусы уже с первых заказов.\n\n"
+        "Что тебе ближе на этом этапе: бизнес или покупки для себя?"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Бизнес", callback_data="path_biz")],
+        [InlineKeyboardButton(text="Покупки", callback_data="path_shop")]
+    ])
+    await cb.message.answer(text, reply_markup=kb, disable_web_page_preview=True)
+    await cb.answer()
+
+@router.callback_query(F.data == "already_have")
+async def cb_already_have(cb: CallbackQuery):
+    name = cb.from_user.first_name or "Участник"
+    text = (
+        f"Прекрасно, {name}! \n\n"
+        "Раз чек-лист у тебя уже есть, давай определимся, с чего начать твой путь:\n"
+        " • Развитие бизнеса — я покажу, как строить доход шаг за шагом и подключаться к команде.\n"
+        " • Покупки для себя — расскажу, как выгодно использовать продукты и получать бонусы с первых заказов.\n\n"
+        "Что тебе ближе на этом этапе: бизнес или покупки для себя?"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Бизнес", callback_data="path_biz")],
+        [InlineKeyboardButton(text="Покупки", callback_data="path_shop")]
+    ])
+    await cb.message.answer(text, reply_markup=kb)
+    await cb.answer()
+
+@router.callback_query(F.data == "path_biz")
+async def cb_biz(cb: CallbackQuery):
+    name = cb.from_user.first_name or "Участник"
+    text = (
+        f"Супер, {name}! \n\n"
+        "Тогда давай сосредоточимся на твоём старте в бизнесе. \n"
+        "Вот первый шаг:\n"
+        " 1. Ознакомление с возможностями — я пришлю тебе простую инструкцию, как начать строить доход.\n"
+        " 2. Выбор направления и плана действий — мы вместе определим, с чего лучше начать именно тебе.\n"
+        " 3. Поддержка и сопровождение — я буду рядом на каждом шаге, чтобы помочь и ответить на вопросы.\n\n"
+        "Скоро я напишу лично тебе сообщение и мы сможем встретиться в удобное для тебя время."
+    )
+    await cb.message.answer(text)
+    await cb.answer()
+
+@router.callback_query(F.data == "path_shop")
+async def cb_shop(cb: CallbackQuery):
+    name = cb.from_user.first_name or "Участник"
+    text = (
+        f"Прекрасно, {name}! \n\n"
+        "Тогда начнём с твоих покупок и выгод:\n"
+        " 1. Ознакомься с продуктами — я пришлю тебе список самых популярных товаров и бонусов.\n"
+        " 2. Сделай первый заказ — легко и удобно, чтобы сразу получить выгоду и бонусы.\n"
+        " 3. Поддержка и советы — я буду рядом, чтобы ответить на любые вопросы и подсказать, как максимально выгодно использовать покупки.\n\n"
+        "Скоро я напишу тебе личное сообщение, где помогу оформить личный бесплатный кабинет. И буду твоим гидом и помощником."
+    )
+    await cb.message.answer(text)
+    await cb.answer()
+
+# ─── АДМИНКА И ПРОЧЕЕ ─────────────────────────────────────────
 
 @router.message(F.text == "⚙️ Админ панель")
-async def cmd_admin(m: Message):
+async def admin_main(m: Message):
     if m.from_user.id not in ADMIN_IDS: return
     total, refs = db.get_stats()
-    await m.answer(f"🔐 **Админ-панель**\n\nВсего юзеров: {total}\nРефералов: {refs}", reply_markup=admin_kb(), parse_mode="Markdown")
+    await m.answer(f"⚙️ Панель управления\n\nВсего юзеров: {total}\nРефералов: {refs}", reply_markup=get_admin_kb())
 
 @router.message(F.text == "📢 Рассылка")
 async def start_broadcast(m: Message, state: FSMContext):
     if m.from_user.id not in ADMIN_IDS: return
-    await m.answer("Отправьте сообщение для рассылки (текст, фото или видео):", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отмена")]], resize_keyboard=True))
-    await state.set_state(AdminStates.waiting_for_broadcast_text)
+    await m.answer("Введите текст рассылки (или отправьте фото):")
+    await state.set_state(AdminStates.waiting_for_broadcast)
 
-@router.message(AdminStates.waiting_for_broadcast_text)
-async def broadcast_content(m: Message, state: FSMContext):
-    if m.text == "❌ Отмена":
-        await state.clear()
-        return await m.answer("Рассылка отменена.", reply_markup=admin_kb())
-    
+@router.message(AdminStates.waiting_for_broadcast)
+async def perform_broadcast(m: Message, state: FSMContext):
     users = db.get_all_users()
-    await m.answer(f"Начинаю рассылку на {len(users)} пользователей...")
-    
     count = 0
-    for user in users:
+    for user_id in users:
         try:
-            await m.copy_to(chat_id=user[0])
+            await m.copy_to(user_id)
             count += 1
-            await asyncio.sleep(0.05) # Защита от Flood
-        except TelegramForbiddenError:
-            logger.info(f"Пользователь {user[0]} заблокировал бота.")
-        except Exception as e:
-            logger.error(f"Ошибка при рассылке {user[0]}: {e}")
-
-    await m.answer(f"✅ Рассылка завершена! Доставлено: {count}", reply_markup=admin_kb())
+            await asyncio.sleep(0.05)
+        except: pass
+    await m.answer(f"✅ Рассылка завершена. Получили: {count} чел.")
     await state.clear()
-
-# ─── ПРОЧИЕ КОМАНДЫ ──────────────────────────────────────────
 
 @router.message(F.text == "📊 Моя статистика")
 async def my_stats(m: Message):
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("SELECT full_name, username FROM users WHERE referrer_id = ?", (m.from_user.id,))
-    rows = cur.fetchall()
-    
-    if not rows:
-        return await m.answer("У вас пока нет приглашенных партнеров. Поделитесь ссылкой!")
-    
-    res = f"📊 **Ваша статистика**\nПриглашено: {len(rows)}\n\n"
-    for i, r in enumerate(rows[:20], 1):
-        name = r[0] if r[0] else "Без имени"
-        res += f"{i}. {name}\n"
-    await m.answer(res, parse_mode="Markdown")
+    with sqlite3.connect(DB_NAME) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (m.from_user.id,)).fetchone()[0]
+    await m.answer(f"📊 Вы пригласили: {count} чел.")
 
 @router.message(F.text == "🔗 Реферальная ссылка")
-async def my_ref(m: Message):
-    bot_user = await bot.get_me()
-    link = f"https://t.me/{bot_user.username}?start={m.from_user.id}"
-    await m.answer(f"Твоя личная ссылка для приглашений:\n`{link}`", parse_mode="Markdown")
+async def ref_link(m: Message):
+    me = await bot.get_me()
+    await m.answer(f"Твоя ссылка:\nhttps://t.me/{me.username}?start={m.from_user.id}")
 
 @router.message(F.text == "🔙 Назад")
-async def back_to_main(m: Message):
-    await m.answer("Возвращаемся в главное меню", reply_markup=main_menu_kb(m.from_user.id))
+async def back(m: Message):
+    await m.answer("Главное меню", reply_markup=get_main_kb(m.from_user.id))
 
 # ─── ЗАПУСК ───────────────────────────────────────────────────
 async def main():
-    logger.info("Запуск бота...")
+    logger.info("Бот запущен")
     await bot.delete_webhook(drop_pending_updates=True)
-    
-    # Уведомление админов о запуске
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_message(admin_id, "🚀 Бот успешно перезапущен!")
-        except: pass
-
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.error("Бот был остановлен пользователем.")
+    except KeyboardInterrupt:
+        print("Бот выключен")
