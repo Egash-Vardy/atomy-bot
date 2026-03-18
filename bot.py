@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import List, Union
 
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.filters import CommandStart, StateFilter
+from aiogram.filters import CommandStart
 from aiogram.types import (
     Message,
     ReplyKeyboardMarkup,
@@ -18,7 +18,7 @@ from aiogram.types import (
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.enums import ParseMode
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────
 API_TOKEN = "8649187707:AAHRB0xnugFsg0Itnlecy7-wqCGPivltz6M"
@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
 class AdminProcess(StatesGroup):
     broadcast_message = State()
 
-bot = Bot(token=API_TOKEN)
+# Инициализация бота с поддержкой HTML по умолчанию
+bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 router = Router()
@@ -104,7 +105,6 @@ def get_admin_reply_kb():
 @router.message(CommandStart())
 async def cmd_start(m: Message):
     uid = m.from_user.id
-    # Здесь берем имя пользователя
     name = m.from_user.full_name 
     
     ref_param = None
@@ -115,7 +115,7 @@ async def cmd_start(m: Message):
     db_manager.register_user(uid, name, m.from_user.username, ref_param)
 
     text = (
-        f"{name}, добро пожаловать в чат!\n\n"
+        f"<b>{name}</b>, добро пожаловать в чат!\n\n"
         "Рады видеть тебя. Это пространство для тех, кто хочет развиваться, расти и выстраивать доход в комфортном темпе.\n\n"
         "Здесь: поддержка, честно про деньги и возможности — без давления и спешки, с уважением к каждому.\n\n"
         "Если ты хочешь в команду, напиши в чат «+» — подскажем, с чего лучше начать.\n\n"
@@ -126,16 +126,15 @@ async def cmd_start(m: Message):
 @router.message(F.text == "+")
 async def process_plus(m: Message):
     uid = m.from_user.id
-    name = m.from_user.first_name # Имя для личного обращения
+    name = m.from_user.first_name
 
-    # Уведомление админам
     for admin_id in ADMIN_IDS:
         try:
             await bot.send_message(admin_id, f"🚨 НОВЫЙ ОТКЛИК (+)\n👤 {m.from_user.full_name}\nID: {uid}")
         except: pass
 
     text = (
-        f"Спасибо, {name}! \n\n"
+        f"Спасибо, <b>{name}</b>! \n\n"
         "Отлично, ты готова сделать первый шаг. \n"
         "Давай начнём с простого: я расскажу, какие возможности у нас есть и как комфортно подключиться к команде.\n\n"
         "Сначала небольшая рекомендация:\n"
@@ -154,7 +153,7 @@ async def process_plus(m: Message):
 async def flow_yes(cb: CallbackQuery):
     name = cb.from_user.first_name
     text = (
-        f"Супер, {name}! \n\n"
+        f"Супер, <b>{name}</b>! \n\n"
         "Вот твой чек-лист для старта — он поможет легко и уверенно сделать первый шаг:\n"
         " 1. Ознакомься с возможностями — что можно делать в команде и как получать доход.\n"
         " 2. Выбери свой путь — бизнес-партнёрство или покупки для себя.\n"
@@ -170,11 +169,12 @@ async def flow_yes(cb: CallbackQuery):
 @router.callback_query(F.data == "flow_choice")
 async def flow_choice(cb: CallbackQuery):
     name = cb.from_user.first_name
-    link = "https://docs.google.com/document/d/1lfw0xlnBjAOqMpo6utmjQ2w1QzFs7APON9WnJc_qI1w/edit?usp=sharing"
+    # Делаем ссылку нажимаемой через HTML тег <a>
+    checklist_url = "https://clipr.cc/RC4rz"
+    
     text = (
-        f"Замечательно, {name}! \n\n"
-        f"Вот твой чек-лист для старта — он поможет сделать первые шаги легко и уверенно:\n"
-        f"[{link}]\n\n"
+        f"Замечательно, <b>{name}</b>! \n\n"
+        f"Вот твой <a href='{checklist_url}'>ЧЕК-ЛИСТ</a> для старта — он поможет сделать первые шаги легко и уверенно.\n\n"
         "Теперь давай определимся с первым действием, чтобы начать прямо сегодня:\n"
         " • Если хочешь попробовать себя в бизнесе, я покажу, с чего начать и как строить доход шаг за шагом.\n"
         " • Если хочешь начать с покупок для себя, расскажу, как использовать продукты и получать бонусы уже с первых заказов.\n\n"
@@ -191,7 +191,7 @@ async def flow_choice(cb: CallbackQuery):
 async def flow_already(cb: CallbackQuery):
     name = cb.from_user.first_name
     text = (
-        f"Прекрасно, {name}! \n\n"
+        f"Прекрасно, <b>{name}</b>! \n\n"
         "Раз чек-лист у тебя уже есть, давай определимся, с чего начать твой путь:\n"
         " • Развитие бизнеса — я покажу, как строить доход шаг за шагом и подключаться к команде.\n"
         " • Покупки для себя — расскажу, как выгодно использовать продукты и получать бонусы с первых заказов.\n\n"
@@ -208,7 +208,7 @@ async def flow_already(cb: CallbackQuery):
 async def res_biz(cb: CallbackQuery):
     name = cb.from_user.first_name
     text = (
-        f"Супер, {name}! \n\n"
+        f"Супер, <b>{name}</b>! \n\n"
         "Тогда давай сосредоточимся на твоём старте в бизнесе. \n"
         "Вот первый шаг:\n"
         " 1. Ознакомление с возможностями — я пришлю тебе простую инструкцию, как начать строить доход.\n"
@@ -223,7 +223,7 @@ async def res_biz(cb: CallbackQuery):
 async def res_shop(cb: CallbackQuery):
     name = cb.from_user.first_name
     text = (
-        f"Прекрасно, {name}! \n\n"
+        f"Прекрасно, <b>{name}</b>! \n\n"
         "Тогда начнём с твоих покупок и выгод:\n"
         " 1. Ознакомься с продуктами — я пришлю тебе список самых популярных товаров и бонусов.\n"
         " 2. Сделай первый заказ — легко и удобно, чтобы сразу получить выгоду и бонусы.\n"
@@ -233,12 +233,12 @@ async def res_shop(cb: CallbackQuery):
     await cb.message.answer(text)
     await cb.answer()
 
-# ─── АДМИН ПАНЕЛЬ ─────────────────────────────────────────────
+# ─── АДМИН ПАНЕЛЬ И СТАТИСТИКА ───────────────────────────────
 @router.message(F.text == "⚙️ Админ панель")
 async def admin_panel(m: Message):
     if m.from_user.id not in ADMIN_IDS: return
     total, refs = db_manager.get_system_stats()
-    await m.answer(f"⚙️ Панель управления\n\nВсего юзеров: {total}\nРефералов: {refs}", reply_markup=get_admin_kb())
+    await m.answer(f"⚙️ Панель управления\n\nВсего юзеров: {total}\nРефералов: {refs}", reply_markup=get_admin_reply_kb())
 
 @router.message(F.text == "📢 Рассылка")
 async def broadcast_start(m: Message, state: FSMContext):
