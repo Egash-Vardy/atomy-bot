@@ -2,9 +2,11 @@ import asyncio
 import sqlite3
 import logging
 import sys
+import os  # Добавлено для порта Render
 from datetime import datetime
 from typing import List, Union
 
+from aiohttp import web  # Добавлено для веб-сервера
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import (
@@ -19,7 +21,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties  # Новый импорт для фикса ошибки
+from aiogram.client.default import DefaultBotProperties
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────
 API_TOKEN = "8649187707:AAHRB0xnugFsg0Itnlecy7-wqCGPivltz6M"
@@ -32,6 +34,19 @@ logging.basicConfig(
     handlers=[logging.FileHandler("bot.log", encoding='utf-8'), logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
+
+# ─── ВЕБ-СЕРВЕР ДЛЯ RENDER (ЧТОБЫ НЕ ЗАСЫПАЛ) ──────────────────
+async def handle(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
 
 class AdminProcess(StatesGroup):
     broadcast_message = State()
@@ -278,6 +293,9 @@ async def back(m: Message):
     await m.answer("Главное меню", reply_markup=get_main_reply_kb(m.from_user.id))
 
 async def main():
+    # Запуск веб-сервера (нужен Render для проверки работоспособности)
+    await start_web_server()
+    # Запуск бота
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
