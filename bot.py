@@ -18,25 +18,20 @@ from aiogram.types import (
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+from aiogram.exceptions import TelegramForbiddenError
 
-# ─── КОНФИГУРАЦИЯ ─────────────────────────────────────────────
+# ─── НАСТРОЙКИ ────────────────────────────────────────────────
 API_TOKEN = "8649187707:AAHRB0xnugFsg0Itnlecy7-wqCGPivltz6M"
 ADMIN_IDS = [8065108309, 1613877823]
 DB_NAME = "community_pro.db"
 
-# Настройка логирования в файл и консоль
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("bot_debug.log", encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[logging.FileHandler("bot.log", encoding='utf-8'), logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
 
-# Состояния для административных функций
 class AdminProcess(StatesGroup):
     broadcast_message = State()
 
@@ -46,7 +41,7 @@ dp = Dispatcher(storage=storage)
 router = Router()
 dp.include_router(router)
 
-# ─── КЛАСС РАБОТЫ С ДАННЫМИ (SQLITE3) ─────────────────────────
+# ─── БАЗА ДАННЫХ ──────────────────────────────────────────────
 class DataManager:
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -63,8 +58,7 @@ class DataManager:
                     full_name TEXT,
                     username TEXT,
                     referrer_id INTEGER,
-                    reg_date TEXT,
-                    status TEXT DEFAULT 'active'
+                    reg_date TEXT
                 )
             """)
             conn.commit()
@@ -85,83 +79,63 @@ class DataManager:
 
     def fetch_all_ids(self) -> List[int]:
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT user_id FROM users")
-            return [row[0] for row in cursor.fetchall()]
+            return [row[0] for row in conn.execute("SELECT user_id FROM users").fetchall()]
 
     def get_system_stats(self):
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            total = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-            referrals = cursor.execute("SELECT COUNT(*) FROM users WHERE referrer_id IS NOT NULL").fetchone()[0]
-            return total, referrals
+            total = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            refs = conn.execute("SELECT COUNT(*) FROM users WHERE referrer_id IS NOT NULL").fetchone()[0]
+            return total, refs
 
 db_manager = DataManager(DB_NAME)
 
 # ─── КЛАВИАТУРЫ ───────────────────────────────────────────────
 def get_main_reply_kb(uid: int):
-    struct = [
-        [KeyboardButton(text="📊 Моя статистика"), KeyboardButton(text="🔗 Реферальная ссылка")]
-    ]
+    struct = [[KeyboardButton(text="📊 Моя статистика"), KeyboardButton(text="🔗 Реферальная ссылка")]]
     if uid in ADMIN_IDS:
         struct.append([KeyboardButton(text="⚙️ Админ панель")])
     return ReplyKeyboardMarkup(keyboard=struct, resize_keyboard=True)
 
 def get_admin_reply_kb():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📢 Рассылка")],
-            [KeyboardButton(text="🔙 Назад в меню")]
-        ],
-        resize_keyboard=True
-    )
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📢 Рассылка")], [KeyboardButton(text="🔙 Назад")]], resize_keyboard=True)
 
-# ─── ЛОГИКА /START ────────────────────────────────────────────
+# ─── ОБРАБОТЧИКИ ──────────────────────────────────────────────
+
 @router.message(CommandStart())
-async def cmd_start_handler(m: Message):
+async def cmd_start(m: Message):
     uid = m.from_user.id
-    full_name = m.from_user.full_name
-    username = m.from_user.username
+    # Здесь берем имя пользователя
+    name = m.from_user.full_name 
     
     ref_param = None
     args = m.text.split()
     if len(args) > 1 and args[1].isdigit():
         ref_param = int(args[1])
 
-    db_manager.register_user(uid, full_name, username, ref_param)
+    db_manager.register_user(uid, name, m.from_user.username, ref_param)
 
-    welcome_text = (
-       f"{name}, добро пожаловать в чат!\n\n"
+    text = (
+        f"{name}, добро пожаловать в чат!\n\n"
         "Рады видеть тебя. Это пространство для тех, кто хочет развиваться, расти и выстраивать доход в комфортном темпе.\n\n"
         "Здесь: поддержка, честно про деньги и возможности — без давления и спешки, с уважением к каждому.\n\n"
         "Если ты хочешь в команду, напиши в чат «+» — подскажем, с чего лучше начать.\n\n"
         "Рады, что ты с нами."
     )
-    await m.answer(welcome_text, reply_markup=get_main_reply_kb(uid))
+    await m.answer(text, reply_markup=get_main_reply_kb(uid))
 
-# ─── ОБРАБОТКА СИМВОЛА "+" ────────────────────────────────────
 @router.message(F.text == "+")
-async def process_plus_trigger(m: Message):
+async def process_plus(m: Message):
     uid = m.from_user.id
-    first_name = m.from_user.first_name or "Участник"
+    name = m.from_user.first_name # Имя для личного обращения
 
-    # Уведомление администраторов
+    # Уведомление админам
     for admin_id in ADMIN_IDS:
         try:
-            adm_kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✉️ Связаться", url=f"tg://user?id={uid}")]
-            ])
-            await bot.send_message(
-                admin_id, 
-                f"🚨 **НОВЫЙ ОТКЛИК (+)**\n👤 Имя: {m.from_user.full_name}\n🆔 ID: {uid}",
-                reply_markup=adm_kb,
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logger.error(f"Ошибка уведомления админа {admin_id}: {e}")
+            await bot.send_message(admin_id, f"🚨 НОВЫЙ ОТКЛИК (+)\n👤 {m.from_user.full_name}\nID: {uid}")
+        except: pass
 
-    step_1_text = (
-        f"Спасибо, {first_name}! \n\n"
+    text = (
+        f"Спасибо, {name}! \n\n"
         "Отлично, ты готова сделать первый шаг. \n"
         "Давай начнём с простого: я расскажу, какие возможности у нас есть и как комфортно подключиться к команде.\n\n"
         "Сначала небольшая рекомендация:\n"
@@ -170,17 +144,15 @@ async def process_plus_trigger(m: Message):
         "Если готова, могу сразу прислать чек-лист и пошаговое руководство, чтобы начать уже сегодня.\n\n"
         "Хочешь, чтобы я отправила его сейчас?"
     )
-    
-    ikb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Да", callback_data="flow_send_checklist")],
-        [InlineKeyboardButton(text="Уже есть чек-лист", callback_data="flow_already_have")]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Да", callback_data="flow_yes")],
+        [InlineKeyboardButton(text="Уже есть чек-лист", callback_data="flow_already")]
     ])
-    await m.answer(step_1_text, reply_markup=ikb)
+    await m.answer(text, reply_markup=kb)
 
-# ─── ОБРАБОТКА CALLBACKS (ВОРОНКА) ─────────────────────────────
-@router.callback_query(F.data == "flow_send_checklist")
-async def flow_yes_step(cb: CallbackQuery):
-    name = cb.from_user.first_name or "Участник"
+@router.callback_query(F.data == "flow_yes")
+async def flow_yes(cb: CallbackQuery):
+    name = cb.from_user.first_name
     text = (
         f"Супер, {name}! \n\n"
         "Вот твой чек-лист для старта — он поможет легко и уверенно сделать первый шаг:\n"
@@ -191,36 +163,33 @@ async def flow_yes_step(cb: CallbackQuery):
         "Если хочешь, можем прямо сейчас обсудить, с чего лучше начать твой первый шаг.\n\n"
         "Хочешь, чтобы я помогла выбрать стартовое направление?"
     )
-    ikb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Да", callback_data="flow_get_link_and_choice")]
-    ])
-    await cb.message.answer(text, reply_markup=ikb)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Да", callback_data="flow_choice")]])
+    await cb.message.answer(text, reply_markup=kb)
     await cb.answer()
 
-@router.callback_query(F.data == "flow_get_link_and_choice")
-async def flow_final_choice(cb: CallbackQuery):
-    name = cb.from_user.first_name or "Участник"
-    doc_link = "https://docs.google.com/document/d/1lfw0xlnBjAOqMpo6utmjQ2w1QzFs7APON9WnJc_qI1w/edit?usp=sharing"
-    
+@router.callback_query(F.data == "flow_choice")
+async def flow_choice(cb: CallbackQuery):
+    name = cb.from_user.first_name
+    link = "https://docs.google.com/document/d/1lfw0xlnBjAOqMpo6utmjQ2w1QzFs7APON9WnJc_qI1w/edit?usp=sharing"
     text = (
         f"Замечательно, {name}! \n\n"
-        "Вот твой чек-лист для старта — он поможет сделать первые шаги легко и уверенно:\n"
-        f"[{doc_link}]\n\n"
+        f"Вот твой чек-лист для старта — он поможет сделать первые шаги легко и уверенно:\n"
+        f"[{link}]\n\n"
         "Теперь давай определимся с первым действием, чтобы начать прямо сегодня:\n"
         " • Если хочешь попробовать себя в бизнесе, я покажу, с чего начать и как строить доход шаг за шагом.\n"
         " • Если хочешь начать с покупок для себя, расскажу, как использовать продукты и получать бонусы уже с первых заказов.\n\n"
         "Что тебе ближе на этом этапе: бизнес или покупки для себя?"
     )
-    ikb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Бизнес", callback_data="final_biz")],
-        [InlineKeyboardButton(text="Покупки", callback_data="final_shop")]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Бизнес", callback_data="res_biz")],
+        [InlineKeyboardButton(text="Покупки", callback_data="res_shop")]
     ])
-    await cb.message.answer(text, reply_markup=ikb, disable_web_page_preview=True)
+    await cb.message.answer(text, reply_markup=kb, disable_web_page_preview=True)
     await cb.answer()
 
-@router.callback_query(F.data == "flow_already_have")
-async def flow_already_have_step(cb: CallbackQuery):
-    name = cb.from_user.first_name or "Участник"
+@router.callback_query(F.data == "flow_already")
+async def flow_already(cb: CallbackQuery):
+    name = cb.from_user.first_name
     text = (
         f"Прекрасно, {name}! \n\n"
         "Раз чек-лист у тебя уже есть, давай определимся, с чего начать твой путь:\n"
@@ -228,17 +197,16 @@ async def flow_already_have_step(cb: CallbackQuery):
         " • Покупки для себя — расскажу, как выгодно использовать продукты и получать бонусы с первых заказов.\n\n"
         "Что тебе ближе на этом этапе: бизнес или покупки для себя?"
     )
-    ikb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Бизнес", callback_data="final_biz")],
-        [InlineKeyboardButton(text="Покупки", callback_data="final_shop")]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Бизнес", callback_data="res_biz")],
+        [InlineKeyboardButton(text="Покупки", callback_data="res_shop")]
     ])
-    await cb.message.answer(text, reply_markup=ikb)
+    await cb.message.answer(text, reply_markup=kb)
     await cb.answer()
 
-# ─── ФИНАЛЬНЫЕ ОТВЕТЫ ─────────────────────────────────────────
-@router.callback_query(F.data == "final_biz")
-async def choice_biz_handler(cb: CallbackQuery):
-    name = cb.from_user.first_name or "Участник"
+@router.callback_query(F.data == "res_biz")
+async def res_biz(cb: CallbackQuery):
+    name = cb.from_user.first_name
     text = (
         f"Супер, {name}! \n\n"
         "Тогда давай сосредоточимся на твоём старте в бизнесе. \n"
@@ -251,9 +219,9 @@ async def choice_biz_handler(cb: CallbackQuery):
     await cb.message.answer(text)
     await cb.answer()
 
-@router.callback_query(F.data == "final_shop")
-async def choice_shop_handler(cb: CallbackQuery):
-    name = cb.from_user.first_name or "Участник"
+@router.callback_query(F.data == "res_shop")
+async def res_shop(cb: CallbackQuery):
+    name = cb.from_user.first_name
     text = (
         f"Прекрасно, {name}! \n\n"
         "Тогда начнём с твоих покупок и выгод:\n"
@@ -265,78 +233,50 @@ async def choice_shop_handler(cb: CallbackQuery):
     await cb.message.answer(text)
     await cb.answer()
 
-# ─── АДМИНИСТРАТИВНЫЙ БЛОК ────────────────────────────────────
+# ─── АДМИН ПАНЕЛЬ ─────────────────────────────────────────────
 @router.message(F.text == "⚙️ Админ панель")
-async def admin_panel_entry(m: Message):
-    if m.from_user.id not in ADMIN_IDS:
-        return
+async def admin_panel(m: Message):
+    if m.from_user.id not in ADMIN_IDS: return
     total, refs = db_manager.get_system_stats()
-    await m.answer(
-        f"📊 **СТАТИСТИКА СООБЩЕСТВА**\n\nВсего участников: {total}\nПришли по рекомендации: {refs}",
-        reply_markup=get_admin_reply_kb(),
-        parse_mode="Markdown"
-    )
+    await m.answer(f"⚙️ Панель управления\n\nВсего юзеров: {total}\nРефералов: {refs}", reply_markup=get_admin_kb())
 
 @router.message(F.text == "📢 Рассылка")
-async def broadcast_init(m: Message, state: FSMContext):
-    if m.from_user.id not in ADMIN_IDS:
-        return
-    await m.answer("Отправьте сообщение (текст или медиа) для массовой рассылки:", reply_markup=KeyboardButton(text="Отмена"))
+async def broadcast_start(m: Message, state: FSMContext):
+    if m.from_user.id not in ADMIN_IDS: return
+    await m.answer("Введите сообщение для рассылки:")
     await state.set_state(AdminProcess.broadcast_message)
 
 @router.message(AdminProcess.broadcast_message)
-async def broadcast_execute(m: Message, state: FSMContext):
-    if m.text == "Отмена":
-        await state.clear()
-        return await m.answer("Рассылка отменена.", reply_markup=get_admin_reply_kb())
-    
-    target_ids = db_manager.fetch_all_ids()
-    success_count = 0
-    
-    await m.answer(f"Начинаю рассылку на {len(target_ids)} контактов...")
-    
-    for user_id in target_ids:
+async def broadcast_send(m: Message, state: FSMContext):
+    ids = db_manager.fetch_all_ids()
+    count = 0
+    for uid in ids:
         try:
-            await m.copy_to(chat_id=user_id)
-            success_count += 1
-            await asyncio.sleep(0.05) # Защита от Flood
-        except (TelegramForbiddenError, Exception):
-            continue
-
-    await m.answer(f"✅ Рассылка завершена!\nУспешно отправлено: {success_count}", reply_markup=get_admin_reply_kb())
+            await m.copy_to(uid)
+            count += 1
+            await asyncio.sleep(0.05)
+        except: continue
+    await m.answer(f"✅ Рассылка завершена. Получили: {count} чел.")
     await state.clear()
 
-# ─── ДОПОЛНИТЕЛЬНЫЕ КОМАНДЫ ───────────────────────────────────
 @router.message(F.text == "📊 Моя статистика")
-async def user_personal_stats(m: Message):
-    uid = m.from_user.id
+async def stats(m: Message):
     with sqlite3.connect(DB_NAME) as conn:
-        count = conn.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (uid,)).fetchone()[0]
-    await m.answer(f"📊 По твоей ссылке присоединилось: {count} чел.")
+        count = conn.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (m.from_user.id,)).fetchone()[0]
+    await m.answer(f"📊 Вы пригласили: {count} чел.")
 
 @router.message(F.text == "🔗 Реферальная ссылка")
-async def user_get_ref_link(m: Message):
-    bot_data = await bot.get_me()
-    link = f"https://t.me/{bot_data.username}?start={m.from_user.id}"
-    await m.answer(f"Твоя персональная ссылка для приглашений:\n`{link}`", parse_mode="Markdown")
+async def ref(m: Message):
+    me = await bot.get_me()
+    await m.answer(f"Твоя ссылка:\nhttps://t.me/{me.username}?start={m.from_user.id}")
 
-@router.message(F.text == "🔙 Назад в меню")
-async def back_to_menu_handler(m: Message):
-    await m.answer("Возвращаемся в главное меню...", reply_markup=get_main_reply_kb(m.from_user.id))
+@router.message(F.text == "🔙 Назад")
+async def back(m: Message):
+    await m.answer("Главное меню", reply_markup=get_main_reply_kb(m.from_user.id))
 
-# ─── ЗАПУСК ПРИЛОЖЕНИЯ ────────────────────────────────────────
 async def main():
-    logger.info("Инициализация системы и запуск Polling...")
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
-    except Exception as exc:
-        logger.critical(f"Критическая ошибка при работе бота: {exc}")
-    finally:
-        await bot.session.close()
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.warning("Бот остановлен вручную.")
+    asyncio.run(main())
