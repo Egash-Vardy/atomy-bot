@@ -19,6 +19,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties  # Новый импорт для фикса ошибки
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────
 API_TOKEN = "8649187707:AAHRB0xnugFsg0Itnlecy7-wqCGPivltz6M"
@@ -35,8 +36,11 @@ logger = logging.getLogger(__name__)
 class AdminProcess(StatesGroup):
     broadcast_message = State()
 
-# Инициализация бота с поддержкой HTML по умолчанию
-bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
+# ИСПРАВЛЕНО: Теперь настройки передаются через default=DefaultBotProperties
+bot = Bot(
+    token=API_TOKEN, 
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 router = Router()
@@ -169,7 +173,6 @@ async def flow_yes(cb: CallbackQuery):
 @router.callback_query(F.data == "flow_choice")
 async def flow_choice(cb: CallbackQuery):
     name = cb.from_user.first_name
-    # Делаем ссылку нажимаемой через HTML тег <a>
     checklist_url = "https://clipr.cc/RC4rz"
     
     text = (
@@ -256,7 +259,7 @@ async def broadcast_send(m: Message, state: FSMContext):
             count += 1
             await asyncio.sleep(0.05)
         except: continue
-    await m.answer(f"✅ Рассылка завершена. Получили: {count} чел.")
+    await m.answer(f"✅ Рассылка завершена. Получили: {count} чел.", reply_markup=get_admin_reply_kb())
     await state.clear()
 
 @router.message(F.text == "📊 Моя статистика")
